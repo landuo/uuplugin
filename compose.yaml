@@ -1,0 +1,42 @@
+name: uuplugin
+
+services:
+  uuplugin:
+    image: ghcr.io/landuo/uuplugin:latest
+    container_name: uuplugin
+    restart: unless-stopped
+    privileged: true
+    environment:
+      UU_LAN_IPADDR: ${UU_IP:?Set UU_IP in .env}
+      UU_LAN_GATEWAY: ${ROUTER_IP:?Set ROUTER_IP in .env}
+      UU_LAN_NETMASK: ${LAN_NETMASK:-255.255.255.0}
+      UU_LAN_DNS: ${DNS_IP:?Set DNS_IP in .env}
+      UU_LAN_SUBNET: ${LAN_SUBNET:?Set LAN_SUBNET in .env}
+    volumes:
+      - type: volume
+        source: uu_state
+        target: /usr/sbin/uu
+        volume:
+          nocopy: true
+      - type: volume
+        source: uu_data
+        target: /tmp/uu
+        volume:
+          nocopy: true
+    networks:
+      lan:
+        ipv4_address: ${UU_IP:?Set UU_IP in .env}
+
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: ${PARENT_IFACE:?Set PARENT_IFACE in .env}
+    ipam:
+      config:
+        - subnet: ${LAN_SUBNET:?Set LAN_SUBNET in .env}
+          gateway: ${ROUTER_IP:?Set ROUTER_IP in .env}
+
+volumes:
+  uu_state:
+  uu_data:
