@@ -1,0 +1,66 @@
+#!/bin/sh /etc/rc.common
+
+START=91
+
+start() {
+    for value in "$UU_LAN_IPADDR" "$UU_LAN_GATEWAY" "$UU_LAN_NETMASK" "$UU_LAN_DNS" "$UU_LAN_SUBNET"; do
+        [ -n "$value" ] || {
+            echo "[UU] Missing network configuration"
+            return 1
+        }
+    done
+
+    echo "[UU] Configuring LAN..."
+    cat > /etc/config/network <<EOF
+config interface 'loopback'
+    option ifname 'lo'
+    option proto 'static'
+    option ipaddr '127.0.0.1'
+    option netmask '255.0.0.0'
+
+config interface 'lan'
+    option type 'bridge'
+    option ifname 'eth0'
+    option proto 'static'
+    option ipaddr '${UU_LAN_IPADDR}'
+    option gateway '${UU_LAN_GATEWAY}'
+    option netmask '${UU_LAN_NETMASK}'
+    list dns '${UU_LAN_DNS}'
+EOF
+
+    /etc/init.d/network restart || return 1
+    uci set dhcp.lan.ignore='1' || return 1
+    uci commit dhcp || return 1
+    /etc/init.d/dnsmasq restart || return 1
+
+    echo "[UU] Downloading installer..."
+    rm -f /root/install.sh
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 \
+        https://uurouter.gdl.netease.com/uuplugin-script/openwrt/install/v2/install.sh \
+        -o /root/install.sh || {
+        echo "[UU] Installer download failed"
+        return 1
+    }
+    [ -s /root/install.sh ] || {
+        echo "[UU] Installer is empty"
+        return 1
+    }
+
+    echo "[UU] Installing plugin..."
+    (cd /root && /bin/sh ./install.sh openwrt "$(uname -m)") || {
+        echo "[UU] Plugin installation failed"
+        return 1
+    }
+    rm -f /root/install.sh
+
+    echo "[UU] Enabling forwarding..."
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null || return 1
+    iptables -C FORWARD -i br-lan -o br-lan -j ACCEPT 2>/dev/null ||
+        iptables -I FORWARD 1 -i br-lan -o br-lan -j ACCEPT || return 1
+    iptables -t nat -C POSTROUTING -s "$UU_LAN_SUBNET" \
+        ! -d "$UU_LAN_SUBNET" -o br-lan -j MASQUERADE 2>/dev/null ||
+        iptables -t nat -A POSTROUTING -s "$UU_LAN_SUBNET" \
+            ! -d "$UU_LAN_SUBNET" -o br-lan -j MASQUERADE || return 1
+
+    echo "[UU] Ready"
+}
